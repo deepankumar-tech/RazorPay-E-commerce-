@@ -1,0 +1,300 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  CUSTOMER
+  MERCHANT
+  ADMIN
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  FAILED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  CREATED
+  PENDING
+  SUCCESS
+  FAILED
+  CANCELLED
+}
+
+enum CampaignStatus {
+  DRAFT
+  PROPOSED
+  APPROVED
+  REJECTED
+  ACTIVE
+  EXPIRED
+}
+
+model User {
+  id           String         @id @default(uuid())
+  email        String         @unique
+  password     String
+  name         String
+  role         Role           @default(CUSTOMER)
+  merchantId   String?
+  merchant     Merchant?      @relation(fields: [merchantId], references: [id])
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  carts        Cart[]
+  orders       Order[]
+  refreshTokens RefreshToken[]
+  conversations AIConversation[]
+  toolExecutions AIToolExecution[]
+  auditLogs    AuditLog[]     @relation("UserAuditLogs")
+
+  @@index([email])
+  @@index([role])
+}
+
+model Merchant {
+  id               String         @id @default(uuid())
+  name             String
+  description      String?
+  businessCategory String
+  supportEmail     String
+  logoUrl          String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  users            User[]
+  products         Product[]
+  orders           Order[]
+  campaigns        Campaign[]
+  merchantRules    MerchantRule?
+}
+
+model Product {
+  id            String     @id @default(uuid())
+  merchantId    String
+  merchant      Merchant   @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  name          String
+  description   String
+  category      String
+  price         Float
+  originalPrice Float?
+  currency      String     @default("INR")
+  sku           String     @unique
+  inventory     Int        @default(100)
+  rating        Float      @default(4.5)
+  reviewsCount  Int        @default(120)
+  imageUrl      String?
+  badge         String?
+  tags          String[]   @default([])
+  features      Json       @default("[]")
+  status        String     @default("ACTIVE")
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  cartItems     CartItem[]
+  orderItems    OrderItem[]
+  inventoryRecord Inventory?
+
+  @@index([category])
+  @@index([merchantId])
+}
+
+model Inventory {
+  id                String   @id @default(uuid())
+  productId         String   @unique
+  product           Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity          Int      @default(100)
+  lowStockThreshold Int      @default(10)
+  updatedAt         DateTime @updatedAt
+}
+
+model Cart {
+  id             String     @id @default(uuid())
+  userId         String
+  user           User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status         String     @default("ACTIVE") // ACTIVE, CHECKED_OUT, ABANDONED
+  totalAmount    Float      @default(0)
+  discountAmount Float      @default(0)
+  finalAmount    Float      @default(0)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  items          CartItem[]
+}
+
+model CartItem {
+  id             String   @id @default(uuid())
+  cartId         String
+  cart           Cart     @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  productId      String
+  product        Product  @relation(fields: [productId], references: [id])
+  quantity       Int      @default(1)
+  price          Float
+  upsellSourceId String?
+  createdAt      DateTime @default(now())
+}
+
+model Order {
+  id                String      @id @default(uuid())
+  orderNumber       String      @unique
+  userId            String
+  user              User        @relation(fields: [userId], references: [id])
+  merchantId        String
+  merchant          Merchant    @relation(fields: [merchantId], references: [id])
+  totalAmount       Float
+  discountAmount    Float       @default(0)
+  finalAmount       Float
+  status            OrderStatus @default(PENDING)
+  customerConfirmed Boolean     @default(false)
+  isAiAssisted      Boolean     @default(false)
+  razorpayOrderId   String?     @unique
+  razorpayPaymentId String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  items             OrderItem[]
+  payments          Payment[]
+
+  @@index([userId])
+  @@index([merchantId])
+  @@index([status])
+}
+
+model OrderItem {
+  id        String   @id @default(uuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+  quantity  Int
+  price     Float
+  isUpsell  Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model Payment {
+  id                String        @id @default(uuid())
+  orderId           String
+  order             Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  razorpayOrderId   String
+  razorpayPaymentId String?
+  razorpaySignature String?
+  amount            Float
+  currency          String        @default("INR")
+  status            PaymentStatus @default(CREATED)
+  failureReason     String?
+  idempotencyKey    String        @unique
+  paymentMethod     String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@index([razorpayOrderId])
+  @@index([orderId])
+}
+
+model Campaign {
+  id              String         @id @default(uuid())
+  merchantId      String
+  merchant        Merchant       @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  title           String
+  description     String
+  targetAudience  String
+  discountPercent Float          @default(10)
+  durationDays    Int            @default(7)
+  status          CampaignStatus @default(PROPOSED)
+  aiGenerated     Boolean        @default(true)
+  targetProductIds String[]      @default([])
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  approvals       CampaignApproval[]
+}
+
+model CampaignApproval {
+  id             String   @id @default(uuid())
+  campaignId     String
+  campaign       Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  merchantUserId String
+  action         String   // APPROVED or REJECTED
+  comment        String?
+  createdAt      DateTime @default(now())
+}
+
+model MerchantRule {
+  id                           String   @id @default(uuid())
+  merchantId                   String   @unique
+  merchant                     Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  maxTransactionAmount         Float    @default(5000)
+  maxDiscountPercent           Float    @default(10)
+  maxUpsellAmount              Float    @default(1500)
+  requireCustomerConfirmation  Boolean  @default(true)
+  allowAutoCartCreation        Boolean  @default(true)
+  allowAiCampaignGeneration    Boolean  @default(true)
+  updatedAt                    DateTime @updatedAt
+}
+
+model AIConversation {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String   @default("AI Shopping Chat")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  toolExecutions AIToolExecution[]
+}
+
+model AIToolExecution {
+  id             String          @id @default(uuid())
+  conversationId String?
+  conversation   AIConversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  userId         String
+  user           User            @relation(fields: [userId], references: [id])
+  toolName       String
+  arguments      Json
+  result         Json
+  status         String          @default("SUCCESS")
+  durationMs     Int             @default(0)
+  createdAt      DateTime        @default(now())
+
+  @@index([userId])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String
+  actor      User     @relation("UserAuditLogs", fields: [actorId], references: [id])
+  actorType  String   // CUSTOMER, MERCHANT, ADMIN, AI_AGENT, SYSTEM
+  action     String   // e.g. AI_CONVERSATION_STARTED, PRODUCT_SEARCHED, UPSELL_RECOMMENDED, etc.
+  resource   String   // e.g. Product, Order, Cart, Payment, Campaign
+  resourceId String?
+  amount     Float?
+  status     String   // SUCCESS, FAILED, PENDING, REJECTED
+  reason     String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([actorId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([token])
+}
