@@ -33,5 +33,4 @@ Thumbs.db
 *.db
 backend/prisma/*.db
 backend/prisma/*.sqlite
-pgdata/
 
